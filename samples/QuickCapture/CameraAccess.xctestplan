@@ -1,0 +1,30 @@
+{
+  "configurations" : [
+    {
+      "id" : "D0D93DE1-3F82-4B57-9B68-D977001D9B33",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+    "performanceAntipatternCheckerEnabled" : true,
+    "targetForVariableExpansion" : {
+      "containerPath" : "container:CameraAccess.xcodeproj",
+      "identifier" : "8A8A8A8A8A8A8A8A8A8A8A8A",
+      "name" : "CameraAccess"
+    }
+  },
+  "testTargets" : [
+    {
+      "parallelizable" : true,
+      "target" : {
+        "containerPath" : "container:CameraAccess.xcodeproj",
+        "identifier" : "E699CC942E8150670052C240",
+        "name" : "CameraAccessTests"
+      }
+    }
+  ],
+  "version" : 1
+}
