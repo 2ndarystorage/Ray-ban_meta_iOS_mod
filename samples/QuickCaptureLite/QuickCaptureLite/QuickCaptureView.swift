@@ -39,19 +39,19 @@ struct QuickCaptureView: View {
 
     private var statusCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Registration")
+                Text("登録")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(controller.registrationStateDescription)
                 .font(.title3.weight(.semibold))
             Divider()
-            Text("Active device")
+                Text("アクティブなデバイス")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(controller.activeDeviceName)
                 .font(.body.monospaced())
             Divider()
-            Text("Streaming state")
+                Text("ストリーミング状態")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text(controller.statusText)
@@ -66,7 +66,7 @@ struct QuickCaptureView: View {
 
     private var previewCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Live preview")
+                Text("ライブプレビュー")
                 .font(.headline)
             if let image = controller.previewImage {
                 ZStack {
@@ -110,7 +110,7 @@ struct QuickCaptureView: View {
                     .overlay(
                         VStack {
                             ProgressView()
-                            Text("No frames yet")
+                            Text("フレームがまだありません")
                                 .font(.footnote)
                                 .foregroundStyle(.secondary)
                         }
@@ -120,7 +120,7 @@ struct QuickCaptureView: View {
             // Optional photo preview shows the last captured still frame
             if let photo = controller.lastPhoto {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Last captured photo")
+                    Text("最後に撮影した写真")
                         .font(.subheadline)
                     Image(uiImage: photo)
                         .resizable()
@@ -136,16 +136,16 @@ struct QuickCaptureView: View {
 
     private var filterControls: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Visual effects")
+            Text("ビジュアルエフェクト")
                 .font(.headline)
-            Picker("Filter", selection: $controller.filterMode) {
+            Picker("フィルター", selection: $controller.filterMode) {
                 ForEach(FilterMode.allCases) { mode in
                     Text(mode.rawValue).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
 
-            Toggle("Show face overlay", isOn: $controller.aiOverlayEnabled)
+            Toggle("顔検出オーバーレイを表示", isOn: $controller.aiOverlayEnabled)
                     .toggleStyle(.switch)
                     .tint(.green)
 
@@ -161,19 +161,19 @@ struct QuickCaptureView: View {
     private var controls: some View {
         VStack(spacing: 12) {
             HStack {
-                Button("Connect", action: controller.connect)
-                Button("Disconnect", action: controller.disconnect)
+                Button("接続", action: controller.connect)
+                Button("切断", action: controller.disconnect)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
 
             HStack {
-                Button("Start stream", action: controller.startStreaming)
-                Button("Stop", action: controller.stopStreaming)
+                Button("ストリーミング開始", action: controller.startStreaming)
+                Button("停止", action: controller.stopStreaming)
             }
             .buttonStyle(.bordered)
 
-            Button("Capture photo", action: controller.capturePhoto)
+            Button("写真撮影", action: controller.capturePhoto)
                 .buttonStyle(.bordered)
                 .controlSize(.large)
         }
@@ -194,11 +194,11 @@ struct QuickCaptureView: View {
 private extension QuickCaptureController {
     var registrationStateDescription: String {
         switch registrationState {
-        case .unknown: return "Unknown"
-        case .unregistered: return "Not registered"
-        case .registering: return "Registering"
-        case .registered: return "Registered"
-        @unknown default: return "Unsupported"
+        case .unknown: return "不明"
+        case .unregistered: return "未登録"
+        case .registering: return "登録中"
+        case .registered: return "登録済み"
+        @unknown default: return "サポート対象外"
         }
     }
 }
