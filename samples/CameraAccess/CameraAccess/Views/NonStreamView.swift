@@ -29,7 +29,7 @@ struct NonStreamView: View {
         HStack {
           Spacer()
           Menu {
-            Button("Disconnect", role: .destructive) {
+            Button("切断", role: .destructive) {
               wearablesVM.disconnectGlasses()
             }
             .disabled(wearablesVM.registrationState != .registered)
@@ -52,11 +52,11 @@ struct NonStreamView: View {
             .aspectRatio(contentMode: .fit)
             .frame(width: 120)
 
-          Text("Stream Your Glasses Camera")
+          Text("メガネのカメラをストリーミング")
             .font(.system(size: 20, weight: .semibold))
             .foregroundColor(.white)
 
-          Text("Tap the Start streaming button to stream video from your glasses or use the camera button to take a photo from your glasses.")
+          Text("「ストリーミング開始」ボタンをタップするとメガネからビデオをストリーミングできます。写真を撮るにはカメラボタンを使用してください。")
             .font(.system(size: 15))
             .multilineTextAlignment(.center)
             .foregroundColor(.white)
@@ -72,7 +72,7 @@ struct NonStreamView: View {
             .foregroundColor(.white.opacity(0.7))
             .frame(width: 16, height: 16)
 
-          Text("Waiting for an active device")
+          Text("デバイス待機中")
             .font(.system(size: 14))
             .foregroundColor(.white.opacity(0.7))
         }
@@ -80,7 +80,7 @@ struct NonStreamView: View {
         .opacity(viewModel.hasActiveDevice ? 0 : 1)
 
         CustomButton(
-          title: "Start streaming",
+          title: "ストリーミング開始",
           style: .primary,
           isDisabled: !viewModel.hasActiveDevice
         ) {
@@ -109,28 +109,28 @@ struct GettingStartedSheetView: View {
 
   var body: some View {
     VStack(spacing: 24) {
-      Text("Getting started")
+      Text("はじめに")
         .font(.system(size: 18, weight: .semibold))
         .foregroundColor(.primary)
 
       VStack(spacing: 12) {
         TipItemView(
           resource: .videoIcon,
-          text: "First, Camera Access needs permission to use your glasses camera."
+          text: "最初に、Camera Accessはメガネのカメラを使用するための許可が必要です。"
         )
         TipItemView(
           resource: .tapIcon,
-          text: "Capture photos by tapping the camera button."
+          text: "カメラボタンをタップして写真を撮影します。"
         )
         TipItemView(
           resource: .smartGlassesIcon,
-          text: "The capture LED lets others know when you're capturing content or going live."
+          text: "キャプチャLEDは、撮影中やライブ配信中であることを他の人に知らせます。"
         )
       }
       .padding(.bottom, 16)
 
       CustomButton(
-        title: "Continue",
+        title: "続ける",
         style: .primary,
         isDisabled: false
       ) {
