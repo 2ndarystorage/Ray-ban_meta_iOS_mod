@@ -17,6 +17,8 @@
 import MWDATCamera
 import MWDATCore
 import SwiftUI
+import AVFoundation
+import Photos
 
 enum StreamingStatus {
   case streaming
@@ -42,6 +44,13 @@ class StreamSessionViewModel: ObservableObject {
   @Published var showPhotoPreview: Bool = false
   // The core DAT SDK StreamSession - handles all streaming operations
   private var streamSession: StreamSession
+  // Recording writer to save streamed video when stopping
+  private var assetWriter: AVAssetWriter?
+  private var writerInput: AVAssetWriterInput?
+  private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+  private var recordingURL: URL?
+  private var recordingFrameCount: Int64 = 0
+  private let recordingFrameRate: Int32 = 24
   // Listener tokens are used to manage DAT SDK event subscriptions
   private var stateListenerToken: AnyListenerToken?
   private var videoFrameListenerToken: AnyListenerToken?
@@ -86,6 +95,10 @@ class StreamSessionViewModel: ObservableObject {
           self.currentVideoFrame = image
           if !self.hasReceivedFirstFrame {
             self.hasReceivedFirstFrame = true
+          }
+          // If recording is active, append this frame to the writer
+          if let _ = self.assetWriter {
+            self.appendFrameToRecording(image: image)
           }
         }
       }
@@ -139,6 +152,10 @@ class StreamSessionViewModel: ObservableObject {
 
   func startSession() async {
     await streamSession.start()
+    // Prepare recording writer when session starts
+    await MainActor.run {
+      self.startRecordingWriterIfNeeded()
+    }
   }
 
   private func showError(_ message: String) {
@@ -148,6 +165,131 @@ class StreamSessionViewModel: ObservableObject {
 
   func stopSession() async {
     await streamSession.stop()
+    // Finish and save recording if present
+    await finishRecordingAndSave()
+  }
+
+  private func startRecordingWriterIfNeeded() {
+    // Avoid recreating if already exists
+    guard assetWriter == nil else { return }
+    // Wait until we have a current frame to determine size
+    guard let image = currentVideoFrame else { return }
+    let size = image.size
+    let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("streaming_\(UUID().uuidString).mov")
+    recordingURL = tempURL
+
+    do {
+      assetWriter = try AVAssetWriter(outputURL: tempURL, fileType: .mov)
+    } catch {
+      print("Failed to create AVAssetWriter: \(error)")
+      assetWriter = nil
+      return
+    }
+
+    let outputSettings: [String: Any] = [
+      AVVideoCodecKey: AVVideoCodecType.h264,
+      AVVideoWidthKey: Int(size.width),
+      AVVideoHeightKey: Int(size.height)
+    ]
+
+    writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
+    writerInput?.expectsMediaDataInRealTime = true
+
+    let attributes: [String: Any] = [
+      kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
+      kCVPixelBufferWidthKey as String: Int(size.width),
+      kCVPixelBufferHeightKey as String: Int(size.height)
+    ]
+
+    if let writerInput = writerInput, assetWriter!.canAdd(writerInput) {
+      assetWriter!.add(writerInput)
+      pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: writerInput, sourcePixelBufferAttributes: attributes)
+      recordingFrameCount = 0
+      assetWriter!.startWriting()
+      assetWriter!.startSession(atSourceTime: .zero)
+    } else {
+      print("Failed to add writer input")
+      assetWriter = nil
+      writerInput = nil
+      pixelBufferAdaptor = nil
+    }
+  }
+
+  private func appendFrameToRecording(image: UIImage) {
+    guard let pixelBufferAdaptor = pixelBufferAdaptor,
+          let writerInput = writerInput,
+          writerInput.isReadyForMoreMediaData else { return }
+
+    let frameTime = CMTime(value: recordingFrameCount, timescale: recordingFrameRate)
+    recordingFrameCount += 1
+
+    guard let pixelBuffer = pixelBufferFromImage(image: image) else { return }
+    if !pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: frameTime) {
+      print("Failed to append pixel buffer at frame \(recordingFrameCount)")
+    }
+  }
+
+  private func pixelBufferFromImage(image: UIImage) -> CVPixelBuffer? {
+    guard let cgImage = image.cgImage else { return nil }
+    let width = cgImage.width
+    let height = cgImage.height
+    var pixelBuffer: CVPixelBuffer?
+    let attrs = [kCVPixelBufferCGImageCompatibilityKey: true,
+                 kCVPixelBufferCGBitmapContextCompatibilityKey: true] as CFDictionary
+    let status = CVPixelBufferCreate(kCFAllocatorDefault, width, height, kCVPixelFormatType_32BGRA, attrs, &pixelBuffer)
+    guard status == kCVReturnSuccess, let px = pixelBuffer else { return nil }
+
+    CVPixelBufferLockBaseAddress(px, [])
+    let pxData = CVPixelBufferGetBaseAddress(px)
+    let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+    guard let context = CGContext(data: pxData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(px), space: rgbColorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+      CVPixelBufferUnlockBaseAddress(px, [])
+      return nil
+    }
+
+    context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+    CVPixelBufferUnlockBaseAddress(px, [])
+    return px
+  }
+
+  private func finishRecordingAndSave() async {
+    guard let writer = assetWriter else { return }
+    writerInput?.markAsFinished()
+    let finishGroup = DispatchGroup()
+    finishGroup.enter()
+    writer.finishWriting {
+      finishGroup.leave()
+    }
+    // wait for finish
+    finishGroup.wait()
+
+    // Save to Photos
+    if let url = recordingURL {
+      PHPhotoLibrary.requestAuthorization { status in
+        if status == .authorized || status == .limited {
+          PHPhotoLibrary.shared().performChanges({
+            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+          }) { saved, error in
+            if let error = error {
+              print("Failed to save video: \(error)")
+            } else if saved {
+              print("Saved recording to Photos: \(url)")
+            }
+            // Cleanup temporary file
+            try? FileManager.default.removeItem(at: url)
+          }
+        } else {
+          print("Photo library permission not granted; temporary file at \(url)")
+        }
+      }
+    }
+
+    // Reset writer state
+    assetWriter = nil
+    writerInput = nil
+    pixelBufferAdaptor = nil
+    recordingURL = nil
+    recordingFrameCount = 0
   }
 
   func dismissError() {

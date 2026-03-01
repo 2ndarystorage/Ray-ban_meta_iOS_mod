@@ -79,7 +79,7 @@ struct ControlsView: View {
     // Controls row
     HStack(spacing: 8) {
       CustomButton(
-        title: "Stop streaming",
+        title: "停止",
         style: .destructive,
         isDisabled: false
       ) {
