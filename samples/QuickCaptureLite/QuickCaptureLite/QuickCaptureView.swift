@@ -5,13 +5,15 @@ struct QuickCaptureView: View {
     @ObservedObject var controller: QuickCaptureController
 
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(spacing: 24) {
-                    statusCard
-                    previewCard
-                    filterControls
-                    controls
+        TabView {
+            // メインのカメラ・ストリーミング画面
+            NavigationStack {
+                ScrollView {
+                    VStack(spacing: 24) {
+                        statusCard
+                        previewCard
+                        filterControls
+                        controls
                     if let error = controller.errorMessage {
                         Text(error)
                             .font(.callout)
@@ -25,6 +27,13 @@ struct QuickCaptureView: View {
                 .padding()
             }
             .navigationTitle("QuickCapture Lite")
+            }
+            .tabItem { Label("カメラ", systemImage: "camera.fill") }
+
+            // ギャラリー画面
+            PhotoGalleryView(controller: controller)
+                .tabItem { Label("ギャラリー", systemImage: "photo.on.rectangle") }
+                .badge(controller.capturedPhotos.count)
         }
     }
 
@@ -81,6 +90,16 @@ struct QuickCaptureView: View {
                             }
                         }
                         .allowsHitTesting(false)
+
+                    if controller.ocrEnabled && !controller.recognizedTexts.isEmpty {
+                        GeometryReader { geo in
+                            TextRecognitionOverlay(
+                                observations: controller.recognizedTexts,
+                                imageSize: geo.size
+                            )
+                        }
+                        .allowsHitTesting(false)
+                    }
                     }
                 }
                 .aspectRatio(image.size, contentMode: .fit)
@@ -127,6 +146,10 @@ struct QuickCaptureView: View {
             .pickerStyle(.segmented)
 
             Toggle("Show face overlay", isOn: $controller.aiOverlayEnabled)
+                    .toggleStyle(.switch)
+                    .tint(.green)
+
+            Toggle("テキスト認識 (OCR)", isOn: $controller.ocrEnabled)
                 .toggleStyle(.switch)
                 .tint(.green)
         }

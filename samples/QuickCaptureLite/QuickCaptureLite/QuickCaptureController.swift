@@ -25,6 +25,9 @@ final class QuickCaptureController: ObservableObject {
     @Published var filterMode: FilterMode = .none
     @Published var aiOverlayEnabled: Bool = true
     @Published var detectedFaces: [CGRect] = []
+    @Published var capturedPhotos: [UIImage] = []  // ギャラリー用に全キャプチャを保持
+    @Published var ocrEnabled: Bool = false
+    @Published var recognizedTexts: [VNRecognizedTextObservation] = []
 
     // Core DAT objects
     private let wearables: WearablesInterface
@@ -133,13 +136,16 @@ final class QuickCaptureController: ObservableObject {
     private func processIncomingFrame(_ image: UIImage) {
         let filterMode = self.filterMode
         let aiEnabled = self.aiOverlayEnabled
+            let ocrEnabled = self.ocrEnabled
         Task.detached(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             let filtered = self.apply(filterMode: filterMode, to: image)
             let faces = aiEnabled ? self.detectFaces(in: image) : []
+            let texts = ocrEnabled ? self.recognizeText(in: image) : []
             await MainActor.run {
                 self.previewImage = filtered
                 self.detectedFaces = aiEnabled ? faces : []
+                self.recognizedTexts = self.ocrEnabled ? texts : []
             }
         }
     }
@@ -151,6 +157,7 @@ final class QuickCaptureController: ObservableObject {
             let filtered = self.apply(filterMode: filterMode, to: image)
             await MainActor.run {
                 self.lastPhoto = filtered
+                self.capturedPhotos.append(filtered)  // ギャラリーに保存
             }
         }
     }
@@ -260,3 +267,21 @@ final class QuickCaptureController: ObservableObject {
         }
     }
 }
+
+    // MARK: – OCR (テキスト認識)
+
+    /// Vision でテキスト認識し、結果を recognizedTexts に格納する
+    private func recognizeText(in image: UIImage) -> [VNRecognizedTextObservation] {
+        guard let cgImage = image.cgImage else { return [] }
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .fast          // 速度優先（精度優先は .accurate）
+        request.recognitionLanguages = ["ja", "en"]
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        do {
+            try handler.perform([request])
+            return request.results ?? []
+        } catch {
+            NSLog("[QuickCaptureLite] OCR failed: \(error.localizedDescription)")
+            return []
+        }
+    }
