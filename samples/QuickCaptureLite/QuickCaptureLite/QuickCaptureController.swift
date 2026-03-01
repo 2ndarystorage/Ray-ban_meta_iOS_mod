@@ -11,14 +11,22 @@ enum FilterMode: String, CaseIterable, Identifiable {
     case comic = "Comic"
 
     var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .none:  return "なし"
+        case .mono:  return "モノクロ"
+        case .comic: return "コミック"
+        }
+    }
 }
 
 @MainActor
 final class QuickCaptureController: ObservableObject {
     // Public state exposed to SwiftUI
     @Published var registrationState: RegistrationState
-    @Published var activeDeviceName: String = "No device"
-    @Published var statusText: String = "Idle"
+    @Published var activeDeviceName: String = "デバイスなし"
+    @Published var statusText: String = "待機中"
     @Published var previewImage: UIImage?
     @Published var lastPhoto: UIImage?
     @Published var errorMessage: String?
@@ -97,19 +105,19 @@ final class QuickCaptureController: ObservableObject {
             Task { @MainActor in
                 switch state {
                 case .stopped:
-                    self?.statusText = "Stopped"
+                    self?.statusText = "停止"
                 case .waitingForDevice:
-                    self?.statusText = "Waiting for device"
+                    self?.statusText = "デバイス待機中"
                 case .starting:
-                    self?.statusText = "Starting"
+                    self?.statusText = "起動中"
                 case .stopping:
-                    self?.statusText = "Stopping"
+                    self?.statusText = "停止中"
                 case .paused:
-                    self?.statusText = "Paused"
+                    self?.statusText = "一時停止"
                 case .streaming:
-                    self?.statusText = "Streaming"
+                    self?.statusText = "ストリーミング中"
                 @unknown default:
-                    self?.statusText = "Unknown state"
+                    self?.statusText = "不明な状態"
                 }
             }
         }
@@ -223,7 +231,7 @@ final class QuickCaptureController: ObservableObject {
                 if status != .granted {
                     let requestStatus = try await wearables.requestPermission(permission)
                     guard requestStatus == .granted else {
-                        await MainActor.run { self.errorMessage = "Camera permission denied" }
+                        await MainActor.run { self.errorMessage = "カメラの権限が拒否されました" }
                         return
                     }
                 }
