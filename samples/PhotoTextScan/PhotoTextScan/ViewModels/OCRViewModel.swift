@@ -17,6 +17,7 @@ import Foundation
 import Photos
 import SwiftUI
 import Vision
+import os
 
 @MainActor
 class OCRViewModel: ObservableObject {
@@ -33,6 +34,7 @@ class OCRViewModel: ObservableObject {
   private let imageManager = PHImageManager.default()
   private let documentsURL = FileManager.default.urls(
     for: .documentDirectory, in: .userDomainMask)[0]
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "meta.wearables", category: "OCRViewModel")
 
   init() {
     authorizationStatus = PHPhotoLibrary.authorizationStatus(for: .readWrite)
@@ -153,7 +155,7 @@ class OCRViewModel: ObservableObject {
     return await withCheckedContinuation { continuation in
       let request = VNRecognizeTextRequest { request, error in
         if let error = error {
-          print("[PhotoTextScan] OCR error: \(error)")
+          self.logger.error("[PhotoTextScan] OCR error: \(error.localizedDescription)")
           continuation.resume(returning: nil)
           return
         }
@@ -195,7 +197,7 @@ class OCRViewModel: ObservableObject {
     do {
       try result.text.write(to: fileURL, atomically: true, encoding: .utf8)
     } catch {
-      print("[PhotoTextScan] Failed to save text file: \(error)")
+      logger.error("[PhotoTextScan] Failed to save text file: \(error.localizedDescription)")
     }
   }
 

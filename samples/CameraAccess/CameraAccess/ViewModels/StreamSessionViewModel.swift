@@ -19,6 +19,7 @@ import MWDATCore
 import SwiftUI
 import AVFoundation
 import Photos
+import os
 
 enum StreamingStatus {
   case streaming
@@ -42,6 +43,7 @@ class StreamSessionViewModel: ObservableObject {
   // Photo capture properties
   @Published var capturedPhoto: UIImage?
   @Published var showPhotoPreview: Bool = false
+  @Published var isRecording: Bool = false
   // The core DAT SDK StreamSession - handles all streaming operations
   private var streamSession: StreamSession
   // Recording writer to save streamed video when stopping
@@ -51,6 +53,7 @@ class StreamSessionViewModel: ObservableObject {
   private var recordingURL: URL?
   private var recordingFrameCount: Int64 = 0
   private let recordingFrameRate: Int32 = 24
+  private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "meta.wearables", category: "StreamSessionViewModel")
   // Listener tokens are used to manage DAT SDK event subscriptions
   private var stateListenerToken: AnyListenerToken?
   private var videoFrameListenerToken: AnyListenerToken?
@@ -96,9 +99,14 @@ class StreamSessionViewModel: ObservableObject {
           if !self.hasReceivedFirstFrame {
             self.hasReceivedFirstFrame = true
           }
-          // If recording is active, append this frame to the writer
-          if let _ = self.assetWriter {
-            self.appendFrameToRecording(image: image)
+          // If recording is active, ensure writer exists and append this frame
+          if self.isRecording {
+            if self.assetWriter == nil {
+              self.startRecordingWriterIfNeeded()
+            }
+            if let _ = self.assetWriter {
+              self.appendFrameToRecording(image: image)
+            }
           }
         }
       }
@@ -152,10 +160,35 @@ class StreamSessionViewModel: ObservableObject {
 
   func startSession() async {
     await streamSession.start()
-    // Prepare recording writer when session starts
+    // Session started. Recording is controlled explicitly via startRecording()/stopRecording().
+  }
+
+  func startRecording() async {
+    guard !isRecording else { return }
+    isRecording = true
+    // Try to create writer now; if no frame yet, retry briefly until first frame arrives
     await MainActor.run {
       self.startRecordingWriterIfNeeded()
     }
+    if assetWriter == nil {
+      let deadline = Date().addingTimeInterval(5)
+      while assetWriter == nil && Date() < deadline {
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        await MainActor.run {
+          self.startRecordingWriterIfNeeded()
+        }
+      }
+    }
+    if assetWriter == nil {
+      logger.warning("Failed to start recording: no video frame available to determine size")
+      isRecording = false
+    }
+  }
+
+  func stopRecording() async {
+    guard isRecording else { return }
+    isRecording = false
+    await finishRecordingAndSave()
   }
 
   private func showError(_ message: String) {
@@ -181,7 +214,7 @@ class StreamSessionViewModel: ObservableObject {
     do {
       assetWriter = try AVAssetWriter(outputURL: tempURL, fileType: .mov)
     } catch {
-      print("Failed to create AVAssetWriter: \(error)")
+      logger.error("Failed to create AVAssetWriter: \(error.localizedDescription)")
       assetWriter = nil
       return
     }
@@ -201,14 +234,14 @@ class StreamSessionViewModel: ObservableObject {
       kCVPixelBufferHeightKey as String: Int(size.height)
     ]
 
-    if let writerInput = writerInput, assetWriter!.canAdd(writerInput) {
-      assetWriter!.add(writerInput)
+    if let writerInput = writerInput, let assetWriter = assetWriter, assetWriter.canAdd(writerInput) {
+      assetWriter.add(writerInput)
       pixelBufferAdaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: writerInput, sourcePixelBufferAttributes: attributes)
       recordingFrameCount = 0
-      assetWriter!.startWriting()
-      assetWriter!.startSession(atSourceTime: .zero)
+      assetWriter.startWriting()
+      assetWriter.startSession(atSourceTime: .zero)
     } else {
-      print("Failed to add writer input")
+      logger.error("Failed to add writer input")
       assetWriter = nil
       writerInput = nil
       pixelBufferAdaptor = nil
@@ -225,7 +258,7 @@ class StreamSessionViewModel: ObservableObject {
 
     guard let pixelBuffer = pixelBufferFromImage(image: image) else { return }
     if !pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: frameTime) {
-      print("Failed to append pixel buffer at frame \(recordingFrameCount)")
+        logger.error("Failed to append pixel buffer at frame \(self.recordingFrameCount)")
     }
   }
 
@@ -255,31 +288,48 @@ class StreamSessionViewModel: ObservableObject {
   private func finishRecordingAndSave() async {
     guard let writer = assetWriter else { return }
     writerInput?.markAsFinished()
-    let finishGroup = DispatchGroup()
-    finishGroup.enter()
-    writer.finishWriting {
-      finishGroup.leave()
+
+    // Await finishWriting asynchronously to avoid blocking the main thread
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      writer.finishWriting {
+        continuation.resume()
+      }
     }
-    // wait for finish
-    finishGroup.wait()
+
+    if writer.status == .failed {
+      let errDesc = writer.error?.localizedDescription ?? "Unknown"
+      logger.error("AssetWriter failed finishing: \(errDesc)")
+    }
 
     // Save to Photos
     if let url = recordingURL {
-      PHPhotoLibrary.requestAuthorization { status in
+      PHPhotoLibrary.requestAuthorization { [weak self] status in
+        guard let self = self else {
+          // If self was deallocated, try to clean up temp file when permission not granted
+          if status != .authorized && status != .limited {
+            try? FileManager.default.removeItem(at: url)
+          }
+          return
+        }
+
         if status == .authorized || status == .limited {
           PHPhotoLibrary.shared().performChanges({
             PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
           }) { saved, error in
-            if let error = error {
-              print("Failed to save video: \(error)")
-            } else if saved {
-              print("Saved recording to Photos: \(url)")
+            Task { @MainActor in
+              if let error = error {
+                self.logger.error("Failed to save video: \(error.localizedDescription)")
+              } else if saved {
+                self.logger.log("Saved recording to Photos: \(url.absoluteString)")
+              }
+              // Cleanup temporary file
+              try? FileManager.default.removeItem(at: url)
             }
-            // Cleanup temporary file
-            try? FileManager.default.removeItem(at: url)
           }
         } else {
-          print("Photo library permission not granted; temporary file at \(url)")
+          Task { @MainActor in
+            self.logger.warning("Photo library permission not granted; temporary file at \(url.absoluteString)")
+          }
         }
       }
     }

@@ -78,6 +78,30 @@ struct ControlsView: View {
   var body: some View {
     // Controls row
     HStack(spacing: 8) {
+      // Record toggle
+      Button(action: {
+        Task {
+          if viewModel.isRecording {
+            await viewModel.stopRecording()
+          } else {
+            await viewModel.startRecording()
+          }
+        }
+      }) {
+        HStack(spacing: 6) {
+          Circle()
+            .fill(viewModel.isRecording ? Color.red : Color.white)
+            .frame(width: 12, height: 12)
+          Text(viewModel.isRecording ? "録画中" : "録画")
+            .foregroundColor(.white)
+            .font(.system(size: 14, weight: .semibold))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(Color.black.opacity(0.35))
+        .cornerRadius(10)
+      }
+
       CustomButton(
         title: "停止",
         style: .destructive,
