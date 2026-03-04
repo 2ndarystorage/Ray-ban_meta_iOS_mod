@@ -34,25 +34,25 @@ struct HomeScreenView: View {
         VStack(spacing: 12) {
           HomeTipItemView(
             resource: .smartGlassesIcon,
-            title: "Video Capture",
-            text: "Record videos directly from your glasses, from your point of view."
+            title: "ビデオキャプチャ",
+            text: "メガネから直接ビデオを録画して、あなたの視点を記録します。"
           )
           HomeTipItemView(
             resource: .soundIcon,
-            title: "Open-Ear Audio",
-            text: "Hear notifications while keeping your ears open to the world around you."
+            title: "オープンイヤーオーディオ",
+            text: "周囲の音を聞きながら通知を受け取ります。"
           )
           HomeTipItemView(
             resource: .walkingIcon,
-            title: "Enjoy On-the-Go",
-            text: "Stay hands-free while you move through your day. Move freely, stay connected."
+            title: "どこでも楽しめる",
+            text: "常に両手が自由で、一日を通じて接続したままです。"
           )
         }
 
         Spacer()
 
         VStack(spacing: 20) {
-          Text("You'll be redirected to the Meta AI app to confirm your connection.")
+          Text("Meta AIアプリで接続を確認しリダイレクトされます。")
             .font(.system(size: 14))
             .foregroundColor(.gray)
             .multilineTextAlignment(.center)
@@ -60,7 +60,7 @@ struct HomeScreenView: View {
             .padding(.horizontal, 12)
 
           CustomButton(
-            title: viewModel.registrationState == .registering ? "Connecting..." : "Connect my glasses",
+            title: viewModel.registrationState == .registering ? "接続中..." : "メガネを接続",
             style: .primary,
             isDisabled: viewModel.registrationState == .registering
           ) {

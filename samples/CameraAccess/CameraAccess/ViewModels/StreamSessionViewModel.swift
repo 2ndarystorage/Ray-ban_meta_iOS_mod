@@ -34,6 +34,8 @@ class StreamSessionViewModel: ObservableObject {
   @Published var streamingStatus: StreamingStatus = .stopped
   @Published var showError: Bool = false
   @Published var errorMessage: String = ""
+  @Published var showSuccess: Bool = false
+  @Published var successMessage: String = ""
   @Published var hasActiveDevice: Bool = false
 
   var isStreaming: Bool {
@@ -52,7 +54,8 @@ class StreamSessionViewModel: ObservableObject {
   private var pixelBufferAdaptor: AVAssetWriterInputPixelBufferAdaptor?
   private var recordingURL: URL?
   private var recordingFrameCount: Int64 = 0
-  private let recordingFrameRate: Int32 = 24
+  private var uiUpdateCounter: Int = 0
+  private let recordingFrameRate: Int32 = 12
   private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "meta.wearables", category: "StreamSessionViewModel")
   // Listener tokens are used to manage DAT SDK event subscriptions
   private var stateListenerToken: AnyListenerToken?
@@ -70,7 +73,7 @@ class StreamSessionViewModel: ObservableObject {
     let config = StreamSessionConfig(
       videoCodec: VideoCodec.raw,
       resolution: StreamingResolution.low,
-      frameRate: 24)
+      frameRate: 12)
     streamSession = StreamSession(streamSessionConfig: config, deviceSelector: deviceSelector)
 
     // Monitor device availability
@@ -95,9 +98,15 @@ class StreamSessionViewModel: ObservableObject {
         guard let self else { return }
 
         if let image = videoFrame.makeUIImage() {
-          self.currentVideoFrame = image
+          self.uiUpdateCounter += 1
+          // Update UI every 2 frames to reduce processing load
+          if self.uiUpdateCounter % 2 == 0 {
+            self.currentVideoFrame = image
+          }
           if !self.hasReceivedFirstFrame {
             self.hasReceivedFirstFrame = true
+            // Ensure first frame is always shown
+            self.currentVideoFrame = image
           }
           // If recording is active, ensure writer exists and append this frame
           if self.isRecording {
@@ -132,8 +141,10 @@ class StreamSessionViewModel: ObservableObject {
       Task { @MainActor [weak self] in
         guard let self else { return }
         if let uiImage = UIImage(data: photoData.data) {
-          self.capturedPhoto = uiImage
-          self.showPhotoPreview = true
+          // Auto-save photo to Photos library without blocking subsequent captures
+          Task {
+            await self.savePhotoToLibrary(uiImage)
+          }
         }
       }
     }
@@ -152,15 +163,16 @@ class StreamSessionViewModel: ObservableObject {
         await startSession()
         return
       }
-      showError("Permission denied")
+      showError("権限が拒否されました")
     } catch {
-      showError("Permission error: \(error.description)")
+      showError("権限の取得に失敗しました: \(error.description)")
     }
   }
 
   func startSession() async {
     await streamSession.start()
-    // Session started. Recording is controlled explicitly via startRecording()/stopRecording().
+    // Automatically start recording when streaming begins
+    await startRecording()
   }
 
   func startRecording() async {
@@ -196,10 +208,15 @@ class StreamSessionViewModel: ObservableObject {
     showError = true
   }
 
+  private func showSuccess(_ message: String) {
+    successMessage = message
+    showSuccess = true
+  }
+
   func stopSession() async {
+    // Stop recording and save video automatically when streaming stops
+    await stopRecording()
     await streamSession.stop()
-    // Finish and save recording if present
-    await finishRecordingAndSave()
   }
 
   private func startRecordingWriterIfNeeded() {
@@ -222,11 +239,16 @@ class StreamSessionViewModel: ObservableObject {
     let outputSettings: [String: Any] = [
       AVVideoCodecKey: AVVideoCodecType.h264,
       AVVideoWidthKey: Int(size.width),
-      AVVideoHeightKey: Int(size.height)
+      AVVideoHeightKey: Int(size.height),
+      AVVideoCompressionPropertiesKey: [
+        AVVideoAverageBitRateKey: Int(size.width * size.height * 0.5)
+      ]
     ]
 
     writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: outputSettings)
     writerInput?.expectsMediaDataInRealTime = true
+    // Set frame rate for proper video encoding
+    writerInput?.mediaTimeScale = recordingFrameRate
 
     let attributes: [String: Any] = [
       kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA),
@@ -256,14 +278,26 @@ class StreamSessionViewModel: ObservableObject {
     let frameTime = CMTime(value: recordingFrameCount, timescale: recordingFrameRate)
     recordingFrameCount += 1
 
-    guard let pixelBuffer = pixelBufferFromImage(image: image) else { return }
+    guard let pixelBuffer = pixelBufferFromImage(image: image) else {
+      logger.error("Failed to create pixel buffer for frame \(self.recordingFrameCount)")
+      return
+    }
     if !pixelBufferAdaptor.append(pixelBuffer, withPresentationTime: frameTime) {
         logger.error("Failed to append pixel buffer at frame \(self.recordingFrameCount)")
     }
   }
 
   private func pixelBufferFromImage(image: UIImage) -> CVPixelBuffer? {
-    guard let cgImage = image.cgImage else { return nil }
+    let cgImage: CGImage
+    if let direct = image.cgImage {
+      cgImage = direct
+    } else if let ciImage = image.ciImage {
+      let context = CIContext()
+      guard let rendered = context.createCGImage(ciImage, from: ciImage.extent) else { return nil }
+      cgImage = rendered
+    } else {
+      return nil
+    }
     let width = cgImage.width
     let height = cgImage.height
     var pixelBuffer: CVPixelBuffer?
@@ -275,8 +309,11 @@ class StreamSessionViewModel: ObservableObject {
     CVPixelBufferLockBaseAddress(px, [])
     let pxData = CVPixelBufferGetBaseAddress(px)
     let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
-    guard let context = CGContext(data: pxData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(px), space: rgbColorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue) else {
+    // BGRA format with premultiplied alpha
+    let bitmapInfo: UInt32 = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+    guard let context = CGContext(data: pxData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: CVPixelBufferGetBytesPerRow(px), space: rgbColorSpace, bitmapInfo: bitmapInfo) else {
       CVPixelBufferUnlockBaseAddress(px, [])
+      logger.error("Failed to create CGContext for pixel buffer")
       return nil
     }
 
@@ -286,7 +323,12 @@ class StreamSessionViewModel: ObservableObject {
   }
 
   private func finishRecordingAndSave() async {
-    guard let writer = assetWriter else { return }
+    guard let writer = assetWriter else {
+      logger.error("No asset writer to finish")
+      return
+    }
+    
+    logger.info("Finishing recording: \(self.recordingFrameCount) frames written")
     writerInput?.markAsFinished()
 
     // Await finishWriting asynchronously to avoid blocking the main thread
@@ -296,39 +338,92 @@ class StreamSessionViewModel: ObservableObject {
       }
     }
 
+    logger.info("AssetWriter finished with status: \(writer.status.rawValue)")
+    
     if writer.status == .failed {
       let errDesc = writer.error?.localizedDescription ?? "Unknown"
       logger.error("AssetWriter failed finishing: \(errDesc)")
+      assetWriter = nil
+      writerInput = nil
+      pixelBufferAdaptor = nil
+      recordingURL = nil
+      recordingFrameCount = 0
+      return
+    }
+    
+    if writer.status != .completed {
+      logger.error("AssetWriter status is not completed: \(writer.status.rawValue)")
+      assetWriter = nil
+      writerInput = nil
+      pixelBufferAdaptor = nil
+      recordingURL = nil
+      recordingFrameCount = 0
+      return
+    }
+
+    // Check if file exists and has content
+    if let url = recordingURL {
+      let fileExists = FileManager.default.fileExists(atPath: url.path)
+      let fileSize = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+      logger.info("Recording file exists: \(fileExists), size: \(fileSize) bytes")
+      
+      if !fileExists || fileSize == 0 {
+        logger.error("Recording file is empty or doesn't exist")
+        assetWriter = nil
+        writerInput = nil
+        pixelBufferAdaptor = nil
+        recordingURL = nil
+        recordingFrameCount = 0
+        return
+      }
     }
 
     // Save to Photos
     if let url = recordingURL {
-      PHPhotoLibrary.requestAuthorization { [weak self] status in
-        guard let self = self else {
-          // If self was deallocated, try to clean up temp file when permission not granted
-          if status != .authorized && status != .limited {
-            try? FileManager.default.removeItem(at: url)
+      logger.info("Starting save to Photos: \(url.absoluteString)")
+      // Use async/await wrapper for PHPhotoLibrary authorization
+      await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+          self?.logger.info("PHPhotoLibrary authorization status: \(status.rawValue)")
+          guard let self = self else {
+            continuation.resume()
+            return
           }
-          return
-        }
 
-        if status == .authorized || status == .limited {
-          PHPhotoLibrary.shared().performChanges({
-            PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
-          }) { saved, error in
-            Task { @MainActor in
-              if let error = error {
-                self.logger.error("Failed to save video: \(error.localizedDescription)")
+          if status == .authorized || status == .limited {
+            self.logger.info("Attempting to save video to Photos...")
+            PHPhotoLibrary.shared().performChanges({
+              PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            }) { [weak self] saved, error in
+              Task { @MainActor in
+                guard let self = self else {
+                  continuation.resume()
+                  return
+                }
+                self.logger.info("PHPhotoLibrary.performChanges completed: saved=\(saved), error=\(error?.localizedDescription ?? "nil")")
+                if let error = error {
+                  self.logger.error("Failed to save video: \(error.localizedDescription)")
+                self.showError("動画の保存に失敗しました: \(error.localizedDescription)")
               } else if saved {
-                self.logger.log("Saved recording to Photos: \(url.absoluteString)")
+                self.logger.info("Successfully saved recording to Photos: \(url.absoluteString)")
+                self.showSuccess("動画をフォトライブラリに保存しました")
               }
-              // Cleanup temporary file
-              try? FileManager.default.removeItem(at: url)
+                // Cleanup temporary file only after successful save
+                if saved {
+                  do {
+                    try FileManager.default.removeItem(at: url)
+                    self.logger.info("Cleaned up temporary file")
+                  } catch {
+                    self.logger.error("Failed to clean up temporary file: \(error.localizedDescription)")
+                  }
+                }
+                continuation.resume()
+              }
             }
-          }
-        } else {
-          Task { @MainActor in
+          } else {
             self.logger.warning("Photo library permission not granted; temporary file at \(url.absoluteString)")
+            self.showError("フォトライブラリへのアクセスが拒否されました。動画を保存できません。")
+            continuation.resume()
           }
         }
       }
@@ -345,6 +440,49 @@ class StreamSessionViewModel: ObservableObject {
   func dismissError() {
     showError = false
     errorMessage = ""
+  }
+
+  func dismissSuccess() {
+    showSuccess = false
+    successMessage = ""
+  }
+
+  private func savePhotoToLibrary(_ image: UIImage) async {
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+      PHPhotoLibrary.requestAuthorization(for: .addOnly) { [weak self] status in
+        guard let self = self else {
+          continuation.resume()
+          return
+        }
+        self.logger.info("PHPhotoLibrary authorization status for photo: \(status.rawValue)")
+        if status == .authorized || status == .limited {
+          self.logger.info("Attempting to save photo to Photos...")
+          PHPhotoLibrary.shared().performChanges({
+            PHAssetChangeRequest.creationRequestForAsset(from: image)
+          }) { [weak self] saved, error in
+            Task { @MainActor in
+              guard let self = self else {
+                continuation.resume()
+                return
+              }
+              self.logger.info("PHPhotoLibrary.performChanges for photo completed: saved=\(saved), error=\(error?.localizedDescription ?? "nil")")
+              if let error = error {
+                self.logger.error("Failed to save photo: \(error.localizedDescription)")
+                self.showError("写真の保存に失敗しました: \(error.localizedDescription)")
+              } else if saved {
+                self.logger.info("Successfully saved photo to Photos")
+                self.showSuccess("写真をフォトライブラリに保存しました")
+              }
+              continuation.resume()
+            }
+          }
+        } else {
+          self.logger.warning("Photo library permission not granted for photo")
+          self.showError("フォトライブラリへのアクセスが拒否されました。写真を保存できません。")
+          continuation.resume()
+        }
+      }
+    }
   }
 
   func capturePhoto() {
@@ -371,23 +509,23 @@ class StreamSessionViewModel: ObservableObject {
   private func formatStreamingError(_ error: StreamSessionError) -> String {
     switch error {
     case .internalError:
-      return "An internal error occurred. Please try again."
+      return "内部エラーが発生しました。もう一度お試しください。"
     case .deviceNotFound:
-      return "Device not found. Please ensure your device is connected."
+      return "デバイスが見つかりません。接続を確認してください。"
     case .deviceNotConnected:
-      return "Device not connected. Please check your connection and try again."
+      return "デバイスが接続されていません。接続を確認してください。"
     case .timeout:
-      return "The operation timed out. Please try again."
+      return "操作がタイムアウトしました。もう一度お試しください。"
     case .videoStreamingError:
-      return "Video streaming failed. Please try again."
+      return "映像のストリーミングに失敗しました。もう一度お試しください。"
     case .audioStreamingError:
-      return "Audio streaming failed. Please try again."
+      return "音声のストリーミングに失敗しました。もう一度お試しください。"
     case .permissionDenied:
-      return "Camera permission denied. Please grant permission in Settings."
+      return "カメラ権限が拒否されました。設定で許可してください。"
     case .hingesClosed:
-      return "The hinges on the glasses were closed. Please open the hinges and try again."
+      return "メガネのヒンジが閉じています。開いてからお試しください。"
     @unknown default:
-      return "An unknown streaming error occurred."
+      return "不明なストリーミングエラーが発生しました。"
     }
   }
 }

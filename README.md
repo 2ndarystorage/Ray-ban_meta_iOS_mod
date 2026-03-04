@@ -9,6 +9,16 @@ By integrating this SDK, developers can reliably connect to Meta's AI glasses an
 The Wearables Device Access Toolkit is in developer preview.
 Developers can access our SDK and documentation, test on supported AI glasses, and create organizations and release channels to share with test users.
 
+## Current implementation & samples
+
+This repository includes sample apps that demonstrate the current set of features and flows available in the SDK.
+You can use these as reference implementations or starting points.
+
+- `samples/CameraAccess`: Full streaming UI that connects to Meta AI glasses, streams the camera feed, captures photos, and shares captured media.
+- `samples/QuickCapture`: CameraAccess-based variant with the same core streaming and capture flow.
+- `samples/QuickCaptureLite`: Minimal SwiftUI sample that covers registration/unregistration, device discovery, start/stop low-bandwidth streaming, on-demand JPEG capture, and simple real-time effects (mono/comic + face-detection overlay).
+- `samples/PhotoTextScan`: Standalone OCR sample (no glasses required) that extracts text from photo-library images and saves results as `.txt` files.
+
 ## Documentation & Community
 
 Find our full [developer documentation](https://wearables.developer.meta.com/docs/develop/) on the Wearables Developer Center.

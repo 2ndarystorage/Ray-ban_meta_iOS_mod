@@ -35,12 +35,19 @@ struct StreamSessionView: View {
         NonStreamView(viewModel: viewModel, wearablesVM: wearablesViewModel)
       }
     }
-    .alert("Error", isPresented: $viewModel.showError) {
+    .alert("エラー", isPresented: $viewModel.showError) {
       Button("OK") {
         viewModel.dismissError()
       }
     } message: {
       Text(viewModel.errorMessage)
+    }
+    .alert("保存完了", isPresented: $viewModel.showSuccess) {
+      Button("OK") {
+        viewModel.dismissSuccess()
+      }
+    } message: {
+      Text(viewModel.successMessage)
     }
   }
 }

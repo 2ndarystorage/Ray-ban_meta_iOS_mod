@@ -194,8 +194,6 @@ struct QuickCaptureView: View {
 private extension QuickCaptureController {
     var registrationStateDescription: String {
         switch registrationState {
-        case .unknown: return "不明"
-        case .unregistered: return "未登録"
         case .registering: return "登録中"
         case .registered: return "登録済み"
         @unknown default: return "サポート対象外"
