@@ -89,3 +89,19 @@ Add or modify the following in your `Info.plist` file.
 ## License
 
 See the [LICENSE](LICENSE) file.
+
+## Program Summary
+
+- iOS SDK and sample apps for integrating Meta AI glasses via the Meta Wearables Device Access Toolkit.
+- Samples cover streaming from glasses, photo capture/sharing, low-bandwidth streaming with effects, and a standalone photo OCR utility (no glasses required).
+
+## How to Use
+
+- Open a sample project in Xcode (e.g., `samples/CameraAccess`, `samples/QuickCapture`, `samples/QuickCaptureLite`, `samples/PhotoTextScan`) and build/run.
+- For glasses-based samples: enable Developer Mode in the Meta AI app, then use the in-app Connect flow to register and stream.
+- For `QuickCaptureLite`: update `MetaAppID` and `ClientToken` in `Info.plist` to match your organization.
+- For `PhotoTextScan`: set signing, update bundle ID, and run on device or simulator.
+
+## Completion Status
+
+- **Partial** — the SDK is explicitly in developer preview and the repo focuses on sample apps and reference flows rather than a production-ready product.
